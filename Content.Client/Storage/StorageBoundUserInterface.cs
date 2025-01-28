@@ -1,129 +1,80 @@
-using Content.Client.Examine;
-using Content.Client.Storage.UI;
-using Content.Client.UserInterface.Controls;
-using Content.Client.Verbs.UI;
-using Content.Shared.Input;
-using Content.Shared.Interaction;
+using Content.Client.UserInterface.Systems.Storage;
+using Content.Client.UserInterface.Systems.Storage.Controls;
 using Content.Shared.Storage;
 using JetBrains.Annotations;
-using Robust.Client.GameObjects;
 using Robust.Client.UserInterface;
-using Robust.Client.UserInterface.Controls;
-using Robust.Shared.Input;
-using static Content.Shared.Storage.StorageComponent;
 
-namespace Content.Client.Storage
+namespace Content.Client.Storage;
+
+[UsedImplicitly]
+public sealed class StorageBoundUserInterface : BoundUserInterface
 {
-    [UsedImplicitly]
-    public sealed class StorageBoundUserInterface : BoundUserInterface
+    private StorageWindow? _window;
+
+    public StorageBoundUserInterface(EntityUid owner, Enum uiKey) : base(owner, uiKey)
     {
-        [ViewVariables]
-        private StorageWindow? _window;
+    }
 
-        [Dependency] private readonly IEntityManager _entManager = default!;
+    protected override void Open()
+    {
+        base.Open();
 
-        public StorageBoundUserInterface(EntityUid owner, Enum uiKey) : base(owner, uiKey)
+        _window = IoCManager.Resolve<IUserInterfaceManager>()
+            .GetUIController<StorageUIController>()
+            .CreateStorageWindow(Owner);
+
+        if (EntMan.TryGetComponent(Owner, out StorageComponent? storage))
         {
-            IoCManager.InjectDependencies(this);
+            _window.UpdateContainer((Owner, storage));
         }
 
-        protected override void Open()
-        {
-            base.Open();
+        _window.OnClose += Close;
+        _window.FlagDirty();
+    }
 
-            if (_window == null)
-            {
-                // TODO: This is a bit of a mess but storagecomponent got moved to shared and cleaned up a bit.
-                var controller = IoCManager.Resolve<IUserInterfaceManager>().GetUIController<StorageUIController>();
-                _window = controller.EnsureStorageWindow(Owner);
-                _window.Title = EntMan.GetComponent<MetaDataComponent>(Owner).EntityName;
+    public void Refresh()
+    {
+        _window?.FlagDirty();
+    }
 
-                _window.EntityList.GenerateItem += _window.GenerateButton;
-                _window.EntityList.ItemPressed += InteractWithItem;
-                _window.StorageContainerButton.OnPressed += TouchedContainerButton;
+    public void Reclaim()
+    {
+        if (_window == null)
+            return;
 
-                _window.OnClose += Close;
+        _window.OnClose -= Close;
+        _window.Orphan();
+        _window = null;
+    }
 
-                if (EntMan.TryGetComponent<StorageComponent>(Owner, out var storageComp))
-                {
-                    BuildEntityList(Owner, storageComp);
-                }
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
 
-            }
-            else
-            {
-                _window.Open();
-            }
-        }
+        Reclaim();
+    }
 
-        public void BuildEntityList(EntityUid uid, StorageComponent component)
-        {
-            _window?.BuildEntityList(uid, component);
-        }
+    public void Hide()
+    {
+        if (_window == null)
+            return;
 
-        public void InteractWithItem(BaseButton.ButtonEventArgs? args, ListData? cData)
-        {
-            if (args == null || cData is not EntityListData { Uid: var entity })
-                return;
+        _window.Visible = false;
+    }
 
-            if (args.Event.Function == EngineKeyFunctions.UIClick)
-            {
-                SendPredictedMessage(new StorageInteractWithItemEvent(_entManager.GetNetEntity(entity)));
-            }
-            else if (EntMan.EntityExists(entity))
-            {
-                OnButtonPressed(args.Event, entity);
-            }
-        }
+    public void Show()
+    {
+        if (_window == null)
+            return;
 
-        private void OnButtonPressed(GUIBoundKeyEventArgs args, EntityUid entity)
-        {
-            if (args.Function == ContentKeyFunctions.ExamineEntity)
-            {
-                EntMan.System<ExamineSystem>()
-                    .DoExamine(entity);
-            }
-            else if (args.Function == EngineKeyFunctions.UseSecondary)
-            {
-                IoCManager.Resolve<IUserInterfaceManager>().GetUIController<VerbMenuUIController>().OpenVerbMenu(entity);
-            }
-            else if (args.Function == ContentKeyFunctions.ActivateItemInWorld)
-            {
-                EntMan.EntityNetManager?.SendSystemNetworkMessage(
-                    new InteractInventorySlotEvent(EntMan.GetNetEntity(entity), altInteract: false));
-            }
-            else if (args.Function == ContentKeyFunctions.AltActivateItemInWorld)
-            {
-                EntMan.RaisePredictiveEvent(new InteractInventorySlotEvent(EntMan.GetNetEntity(entity), altInteract: true));
-            }
-            else
-            {
-                return;
-            }
+        _window.Visible = true;
+    }
 
-            args.Handle();
-        }
-
-        public void TouchedContainerButton(BaseButton.ButtonEventArgs args)
-        {
-            SendPredictedMessage(new StorageInsertItemMessage());
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            base.Dispose(disposing);
-            if (!disposing)
-                return;
-
-            if (_window != null)
-            {
-                _window.Orphan();
-                _window.EntityList.GenerateItem -= _window.GenerateButton;
-                _window.EntityList.ItemPressed -= InteractWithItem;
-                _window.StorageContainerButton.OnPressed -= TouchedContainerButton;
-                _window.OnClose -= Close;
-                _window = null;
-            }
-        }
+    public void ReOpen()
+    {
+        _window?.Orphan();
+        _window = null;
+        Open();
     }
 }
+
